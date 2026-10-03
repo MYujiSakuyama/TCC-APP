@@ -26,7 +26,6 @@ COLUNAS_OBRIGATORIAS = ["Data", "Tipo", "Ticker", "Quantidade", "Preco"]
 # Configuração da página em modo Wide
 st.set_page_config(
     page_title="Calculadora IR Renda Variável (B3)",
-    page_icon="📈",
     layout="wide"
 )
 
@@ -48,7 +47,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Header principal do projeto
-st.markdown('<div class="main-header">📉 Calculadora de Imposto de Renda em Renda Variável (B3)</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">Calculadora de Imposto de Renda em Renda Variável (B3)</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Trabalho de Conclusão de Curso (TCC) - Instituto Federal do Paraná (IFPR Campus Londrina)</div>', unsafe_allow_html=True)
 
 
@@ -93,7 +92,7 @@ def preparar_operacoes(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------------------------------------------------------
 # SIDEBAR: Configuração de Saldos de Meses Anteriores (Reais)
 # -----------------------------------------------------------------------------
-st.sidebar.header("⚙️ Saldos de Meses Anteriores")
+st.sidebar.header("Saldos de Meses Anteriores")
 st.sidebar.caption("Saldos existentes antes do primeiro mês importado.")
 
 prej_ini_swing = st.sidebar.number_input("Prejuízo Acumulado (Swing Trade Ações)", min_value=0.0, value=0.0, step=50.0)
@@ -118,9 +117,9 @@ if "notas_importadas" not in st.session_state:
 # TABS PRINCIPAIS
 # -----------------------------------------------------------------------------
 tab_import, tab_apuracao, tab_docs = st.tabs([
-    "📥 1. Entrada de Operações (Parser)",
-    "📊 2. Apuração e Relatório",
-    "📚 3. Regras de Cálculo (TCC)"
+    "1. Entrada de Operações (Parser)",
+    "2. Apuração e Relatório",
+    "3. Regras de Cálculo (TCC)"
 ])
 
 # -----------------------------------------------------------------------------
@@ -147,7 +146,7 @@ with tab_import:
                 # Utiliza o parser.py separado para importar os dados reais
                 df_nota = parse_pdf_nota_corretagem(arquivo)
                 if df_nota.empty:
-                    resumo = "⚠️ nenhuma operação identificada"
+                    resumo = "nenhuma operação identificada"
                 else:
                     # Valida o conteúdo antes de gravar no estado da sessão
                     preparar_operacoes(df_nota)
@@ -155,9 +154,9 @@ with tab_import:
                         [st.session_state["df_operacoes"], df_nota],
                         ignore_index=True
                     )
-                    resumo = f"✅ {len(df_nota)} operações importadas"
+                    resumo = f"{len(df_nota)} operações importadas"
             except Exception as e:
-                resumo = f"❌ erro na leitura: {e}"
+                resumo = f"erro na leitura: {e}"
 
             st.session_state["notas_importadas"][arquivo.name] = resumo
 
@@ -202,7 +201,7 @@ with tab_import:
                 st.success(f"Operação com {ticker_informado} adicionada!")
 
     st.divider()
-    st.subheader("📋 Operações Importadas / Cadastradas")
+    st.subheader("Operações Importadas / Cadastradas")
 
     if not st.session_state["df_operacoes"].empty:
         st.dataframe(st.session_state["df_operacoes"], width="stretch")
@@ -221,7 +220,7 @@ with tab_apuracao:
     if st.session_state["df_operacoes"].empty:
         st.warning("Nenhuma operação encontrada. Importe ou adicione operações na Aba 1.")
     else:
-        st.subheader("🔍 Classificação de Ativos e Apuração Fiscal")
+        st.subheader("Classificação de Ativos e Apuração Fiscal")
 
         try:
             df_ops = preparar_operacoes(st.session_state["df_operacoes"])
@@ -287,7 +286,7 @@ with tab_apuracao:
         col_res1, col_res2 = st.columns(2)
 
         with col_res1:
-            st.markdown("### 📊 Detalhamento por Modalidade")
+            st.markdown("### Detalhamento por Modalidade")
             dados_resumo = [
                 {"Modalidade": "Swing Trade (Ações)", "Vendas (R$)": res_mensal.vendas_acoes_swing, "Lucro Bruto (R$)": res_mensal.lucro_bruto_swing, "Prej. Compensado": res_mensal.prejuizo_compensado_swing, "Base de Cálculo": res_mensal.base_calculo_swing, "Alíquota": "15%", "Imposto Bruto": res_mensal.imposto_swing},
                 {"Modalidade": "Day Trade (Ações/ETFs)", "Vendas (R$)": res_mensal.vendas_day_trade, "Lucro Bruto (R$)": res_mensal.lucro_bruto_day_trade, "Prej. Compensado": res_mensal.prejuizo_compensado_day_trade, "Base de Cálculo": res_mensal.base_calculo_day_trade, "Alíquota": "20%", "Imposto Bruto": res_mensal.imposto_day_trade},
@@ -296,7 +295,7 @@ with tab_apuracao:
             st.dataframe(pd.DataFrame(dados_resumo), width="stretch")
 
         with col_res2:
-            st.markdown("### 🧾 Resumo de Deduções e Saldo Final")
+            st.markdown("### Resumo de Deduções e Saldo Final")
             st.write(f"• **IRRF Retido no Mês:** {formatar_brl(res_mensal.irrf_mes)}")
             st.write(f"• **IRRF Total Compensado:** {formatar_brl(res_mensal.irrf_compensado)}")
             st.write(f"• **IRRF Acumulado para Futuro:** {formatar_brl(res_mensal.irrf_acumulado_para_futuro)}")
@@ -306,10 +305,10 @@ with tab_apuracao:
             st.write(f"• **Saldo Prejuízo FIIs Futuro:** {formatar_brl(res_mensal.prejuizo_acumulado_fim_fiis)}")
 
             if res_mensal.darf_a_pagar > 0:
-                st.success(f"✅ **GERAR DARF NO VALOR DE {formatar_brl(res_mensal.darf_a_pagar)}**")
+                st.success(f"**GERAR DARF NO VALOR DE {formatar_brl(res_mensal.darf_a_pagar)}**")
             else:
                 st.info(
-                    "ℹ️ **SEM DARF A PAGAR ESTE MÊS.** Valor acumulado para futuro: "
+                    "**SEM DARF A PAGAR ESTE MÊS.** Valor acumulado para futuro: "
                     f"{formatar_brl(res_mensal.darf_acumulado_para_futuro)}"
                 )
 
@@ -317,7 +316,7 @@ with tab_apuracao:
 
         # Consolidado de todos os meses apurados
         if len(meses) > 1:
-            st.markdown("### 🗓️ Consolidado dos Meses Apurados")
+            st.markdown("### Consolidado dos Meses Apurados")
             st.dataframe(pd.DataFrame([
                 {
                     "Mês": r.mes_ano,
@@ -331,7 +330,7 @@ with tab_apuracao:
             st.divider()
 
         # Posição Atualizada da Carteira
-        st.markdown(f"### 💼 Posição da Carteira ao Final de {mes_selecionado} (Custo Médio)")
+        st.markdown(f"### Posição da Carteira ao Final de {mes_selecionado} (Custo Médio)")
         dados_pos = [
             {
                 "Ticker": ticker,
@@ -380,7 +379,7 @@ Mês Apurado: {res_mensal.mes_ano}
 ====================================================================
 """
         st.download_button(
-            label="📄 Baixar Relatório Fiscal (.txt)",
+            label="Baixar Relatório Fiscal (.txt)",
             data=relatorio_txt,
             file_name=f"relatorio_fiscal_{res_mensal.mes_ano}.txt",
             mime="text/plain"
@@ -390,7 +389,7 @@ Mês Apurado: {res_mensal.mes_ano}
 # TAB 3: Documentação das Regras (TCC)
 # -----------------------------------------------------------------------------
 with tab_docs:
-    st.subheader("📚 Regras de Tributação em Renda Variável (B3)")
+    st.subheader("Regras de Tributação em Renda Variável (B3)")
     st.markdown("""
     Este sistema realiza o cálculo dos impostos conforme a legislação da **Receita Federal do Brasil (RFB)**:
 
@@ -401,7 +400,7 @@ with tab_docs:
     5. **Mínimo de R$ 10,00 para DARF**: Imposto a recolher inferior a R$ 10,00 acumula para meses futuros.
     6. **Custo Médio Ponderado**: O custo de cada ativo é recalculado a cada compra, em ordem cronológica.
 
-    ### 📄 Leitura da Nota de Corretagem (padrão SINACOR)
+    ### Leitura da Nota de Corretagem (padrão SINACOR)
 
     A única fonte de dados do sistema é a nota de corretagem em PDF. Da seção
     **"Negócios realizados"**, cada linha é lida pelas posições das colunas:

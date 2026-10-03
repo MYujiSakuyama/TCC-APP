@@ -1,17 +1,17 @@
-# 📉 Calculadora de Imposto de Renda em Renda Variável (B3)
+# Calculadora de Imposto de Renda em Renda Variável (B3)
 
 Aplicação Web desenvolvida em **Python** e **Streamlit** para apuração fiscal e cálculo automatizado de Imposto de Renda (IR) incidente sobre operações no mercado financeiro brasileiro (B3), desenvolvida como projeto de Trabalho de Conclusão de Curso (TCC) no **Instituto Federal do Paraná (IFPR - Campus Londrina)**.
 
 ---
 
-## 🎯 Principais Funcionalidades
+## Principais Funcionalidades
 
-- **📥 Importação Automática (Parser)**:
+- **Importação Automática (Parser)**:
   - Leitura e extração de dados reais a partir de **Notas de Corretagem em PDF** (Padrão SINCOR B3).
   - Suporte à importação via planilhas **CSV** e **Excel (.xlsx / .xls)**.
   - Possibilidade de lançamento manual de operações.
 
-- **🧮 Apuração Fiscal e Regras da Receita Federal (RFB)**:
+- **Apuração Fiscal e Regras da Receita Federal (RFB)**:
   - **Custo Médio Ponderado**: Recálculo dinâmico da posição da carteira a cada nova compra cronológica.
   - **Isenção dos R$ 20.000,00**: Aplicação automática do benefício de isenção de IR para alienações de ações em operações comuns (Swing Trade).
   - **Segregação por Modalidade**:
@@ -22,14 +22,14 @@ Aplicação Web desenvolvida em **Python** e **Streamlit** para apuração fisca
   - **Dedução de IRRF**: Compensação do imposto retido na fonte ("dedo-duro").
   - **Regra Mínima de DARF**: Cumprimento da regra de valor mínimo de R$ 10,00 para recolhimento mensal (acumulação automática para meses futuros).
 
-- **📊 Relatório e Exportação**:
+- **Relatório e Exportação**:
   - Visualização detalhada do demonstrativo mensal.
   - Download do relatório fiscal consolidado em formato `.txt`.
   - Posição final da carteira e custos médios por ativo.
 
 ---
 
-## 📁 Estrutura do Repositório
+## Estrutura do Repositório
 
 ```text
 ├── app.py           # Interface web e dashboard Streamlit
@@ -42,7 +42,7 @@ Aplicação Web desenvolvida em **Python** e **Streamlit** para apuração fisca
 
 ---
 
-## 🚀 Como Executar Localmente
+## Como Executar Localmente
 
 1. **Clone o repositório:**
    ```bash
@@ -71,7 +71,7 @@ Aplicação Web desenvolvida em **Python** e **Streamlit** para apuração fisca
 
 ---
 
-## 🧪 Executando os Testes Unitários
+## Executando os Testes Unitários
 
 Para validar a integridade dos cálculos fiscais e regras de negócio:
 
