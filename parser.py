@@ -1,54 +1,20 @@
 """
 parser.py - Módulo de Parsing de Operações e Notas de Corretagem em PDF (TCC)
 
-Este módulo é responsável por ler e estruturar dados de operações a partir de:
-1. Arquivos de Notas de Corretagem em formato PDF (Padrão SINCOR B3 - Rico, Clear, Inter, XP, etc.).
-2. Planilhas em formato CSV e Excel (.xlsx / .xls).
+Este módulo é responsável por ler e estruturar as operações de renda variável a
+partir de Notas de Corretagem em PDF no padrão SINACOR da B3 (Clear, Rico, XP,
+Inter, entre outras), única fonte de dados aceita pelo sistema.
 
 Totalmente documentado e focado na precisão de extração dos dados reais.
 """
 
 import re
-import io
 import pandas as pd
 from typing import List, Dict, Any, Tuple
 import pypdf
 import pdfplumber
 
 from utils import Operacao, classificar_ativo_api
-
-
-def normalizar_colunas(df: pd.DataFrame) -> pd.DataFrame:
-    """Padroniza os nomes das colunas de um DataFrame lido."""
-    mapeamento = {
-        "data": "Data", "data operacao": "Data", "dt_operacao": "Data",
-        "tipo": "Tipo", "tipo_op": "Tipo", "c/v": "Tipo", "operacao": "Tipo",
-        "ticker": "Ticker", "ativo": "Ticker", "codigo": "Ticker",
-        "quantidade": "Quantidade", "qtd": "Quantidade", "quant": "Quantidade",
-        "preco": "Preco", "preço": "Preco", "preco_unitario": "Preco", "valor_unitario": "Preco",
-        "taxas": "Taxas", "corretagem": "Taxas", "emolumentos": "Taxas", "custos": "Taxas",
-        "daytrade": "DayTrade", "day_trade": "DayTrade", "is_day_trade": "DayTrade",
-        "irrf": "IRRF", "imposto_retido": "IRRF", "irrf_retido": "IRRF"
-    }
-
-    novas_colunas = {}
-    for col in df.columns:
-        col_limpa = str(col).strip().lower()
-        if col_limpa in mapeamento:
-            novas_colunas[col] = mapeamento[col_limpa]
-        else:
-            novas_colunas[col] = str(col).strip().capitalize()
-
-    df = df.rename(columns=novas_colunas)
-
-    if "Taxas" not in df.columns:
-        df["Taxas"] = 0.0
-    if "DayTrade" not in df.columns:
-        df["DayTrade"] = False
-    if "IRRF" not in df.columns:
-        df["IRRF"] = 0.0
-
-    return df
 
 
 def extrair_texto_pdf(file_input: Any) -> str:
@@ -85,183 +51,172 @@ def _converter_valor_br(valor_str: str) -> float:
         return 0.0
 
 
+# Linha de "Negócios realizados" no padrão SINCOR/B3. Exemplo real:
+#
+#   1-BOVESPA V FRACIONARIO BBSEGURIDADE ON NM 54 24,99 1.349,46 C
+#   └─ bolsa  │ └ mercado   └ especificação     │  │     │        └ D/C
+#             └ C/V                             │  │     └ valor da operação
+#                                               │  └ preço unitário
+#                                               └ quantidade
+#
+# O parse é ancorado nas colunas da direita (quantidade, preço, valor, D/C),
+# porque o ticker não aparece na nota: a coluna traz a "Especificação do título".
+PADRAO_NEGOCIO = re.compile(
+    r'BOVESPA\s+([CV])\s+(\S+)\s+(.+?)\s+'      # C/V, tipo de mercado, especificação
+    r'(\d+)\s+'                                  # quantidade
+    r'(\d[\d.]*,\d{2})\s+'                       # preço unitário
+    r'(\d[\d.]*,\d{2})\s+'                       # valor da operação
+    r'[DC]\s*$',                                 # indicador Débito / Crédito
+    re.IGNORECASE
+)
+
+# Códigos da coluna "Obs. (*)", que vem colada ao final da especificação.
+# A letra 'C' é deixada de fora de propósito, para não consumir o sufixo "CI"
+# das cotas de FIIs e ETFs.
+PADRAO_OBS = re.compile(r'^[#ADHTXFYBLIP28]{1,2}$')
+
+
+def _valor_do_rotulo(texto: str, rotulo: str, ultimo: bool = False) -> float:
+    """
+    Procura a linha do resumo da nota que contém o rótulo informado e devolve
+    um valor monetário dessa linha.
+
+    A busca considera apenas o trecho da linha após o rótulo, porque o resumo
+    da nota é impresso em duas colunas lado a lado e elas caem na mesma linha
+    de texto: 'Compras à vista 15.913,10 Taxa de liquidação 7,92 D'.
+
+    ultimo=False pega o primeiro valor após o rótulo (taxas e emolumentos).
+    ultimo=True pega o último valor, usado no IRRF, cuja linha é
+    'I.R.R.F. s/ operações, base R$15.801,54 0,79' (o primeiro número é a base).
+    """
+    for linha in texto.splitlines():
+        match = re.search(rotulo, linha, re.IGNORECASE)
+        if not match:
+            continue
+        valores = re.findall(r'\d[\d.]*,\d{2}', linha[match.end():])
+        if valores:
+            return _converter_valor_br(valores[-1] if ultimo else valores[0])
+    return 0.0
+
+
+def _separar_obs(especificacao: str) -> Tuple[str, List[str]]:
+    """
+    Separa a especificação do título dos códigos da coluna 'Obs. (*)'.
+    Em 'BLAU ON NM #2' devolve ('BLAU ON NM', ['#2']).
+    """
+    tokens = especificacao.split()
+    obs = []
+    while len(tokens) > 1 and PADRAO_OBS.match(tokens[-1]):
+        obs.insert(0, tokens.pop().upper())
+    return " ".join(tokens), obs
+
+
+def _categoria_por_especificacao(especificacao: str) -> str:
+    """
+    Classifica o ativo pela própria especificação da nota, já que o ticker
+    não é informado: 'FII ... CI' é fundo imobiliário, '... CI' é ETF e
+    'ON / PN / UNT' são ações.
+    """
+    espec = especificacao.upper()
+    if "FII" in espec or "FDO INV IMOB" in espec:
+        return "FII"
+    if espec.endswith(" CI") or espec.endswith("CI"):
+        return "ETF"
+    return "ACAO"
+
+
 def parse_pdf_nota_corretagem(file_input: Any) -> pd.DataFrame:
     """
     Realiza o parse de um arquivo PDF de Nota de Corretagem da B3.
     Identifica:
     - Data do pregão
     - Operações de Compra (C) e Venda (V)
-    - Ticker dos ativos (ex: PETR4, VALE3, MXRF11)
-    - Quantidade, Preço Unitário e Taxas Proporcionais
-    - IRRF retido na fonte
+    - Especificação do título, quantidade e preço unitário
+    - Categoria do ativo (ACAO / FII / ETF) e marcação de Day Trade
+    - Taxas e IRRF do resumo, rateados proporcionalmente
     """
     texto = extrair_texto_pdf(file_input)
-    linhas = texto.splitlines()
 
-    # 1. Extração da Data do Pregão
+    # 1. Extração da Data do Pregão.
+    # O cabeçalho é 'Nr. nota Folha Data pregão' e os valores vêm na linha
+    # seguinte ('4535159 1 02/05/2022'), por isso a busca atravessa a quebra.
     data_nota = ""
-    padrao_data = re.search(r'(?:Data\s*pregão|Data\s*Pregão|Data):\s*(\d{2}/\d{2}/\d{4})', texto, re.IGNORECASE)
+    padrao_data = re.search(
+        r'Data\s*preg[ãa]o[\s\S]{0,120}?(\d{2}/\d{2}/\d{4})', texto, re.IGNORECASE
+    )
     if not padrao_data:
         padrao_data = re.search(r'(\d{2}/\d{2}/\d{4})', texto)
     if padrao_data:
         data_nota = padrao_data.group(1)
 
-    # 2. Extração das Operações (Linhas de Negócios Realizados)
+    # 2. Extração das Operações (linhas de "Negócios realizados")
     operacoes_encontradas = []
 
-    # Regex para capturar tickers no padrão B3 (ex: PETR4, VALE3, MXRF11, BBDC4F)
-    padrao_ticker = re.compile(r'\b([A-Z]{4}[0-9]{1,2}[Ff]?)\b')
-
-    for linha in linhas:
-        linha_str = linha.strip()
-        if not linha_str:
+    for linha in texto.splitlines():
+        match = PADRAO_NEGOCIO.search(linha.strip())
+        if not match:
             continue
 
-        # Verifica se a linha contém indicação de BOVESPA / B3 e operação Compra (C) ou Venda (V)
-        if "BOVESPA" in linha_str or "C" in linha_str.split() or "V" in linha_str.split():
-            tokens = linha_str.split()
-            
-            # Procura por "C" ou "V" na linha
-            tipo_op = None
-            if "C" in tokens:
-                tipo_op = "C"
-            elif "V" in tokens:
-                tipo_op = "V"
+        tipo_op, _mercado, especificacao_bruta, qtd_str, preco_str, _valor_str = match.groups()
+        especificacao, obs = _separar_obs(especificacao_bruta)
 
-            if not tipo_op:
-                continue
+        qtd = int(qtd_str)
+        preco = _converter_valor_br(preco_str)
+        if qtd <= 0 or preco <= 0.0 or not especificacao:
+            continue
 
-            # Procura o Ticker na linha
-            match_ticker = padrao_ticker.search(linha_str)
-            if match_ticker:
-                ticker_bruto = match_ticker.group(1).upper()
-                # Remove o 'F' final indicador de mercado fracionário se presente (ex: PETR4F -> PETR4)
-                if len(ticker_bruto) > 5 and ticker_bruto.endswith("F") and not ticker_bruto.endswith("11F"):
-                    ticker = ticker_bruto[:-1]
-                else:
-                    ticker = ticker_bruto
-
-                # Procura por números na linha (Quantidade e Preço)
-                # Formato típico de números com vírgula: 100 30,50 3.050,00
-                numeros_br = re.findall(r'\b\d{1,3}(?:\.\d{3})*,\d{2}\b|\b\d+\b', linha_str)
-                
-                if len(numeros_br) >= 2:
-                    try:
-                        # O primeiro número inteiro costuma ser a quantidade
-                        # Os seguintes são preço unitário e valor total
-                        qtd = 0
-                        preco = 0.0
-                        
-                        for num in numeros_br:
-                            if "," not in num and int(num) > 0 and qtd == 0:
-                                qtd = int(num)
-                            elif "," in num and preco == 0.0:
-                                preco = _converter_valor_br(num)
-
-                        if qtd > 0 and preco > 0.0:
-                            operacoes_encontradas.append({
-                                "Data": data_nota,
-                                "Tipo": tipo_op,
-                                "Ticker": ticker,
-                                "Quantidade": qtd,
-                                "Preco": preco,
-                                "Taxas": 0.0,
-                                "DayTrade": False,
-                                "IRRF": 0.0
-                            })
-                    except Exception:
-                        pass
+        operacoes_encontradas.append({
+            "Data": data_nota,
+            "Tipo": tipo_op.upper(),
+            "Ticker": especificacao,
+            "Quantidade": qtd,
+            "Preco": preco,
+            "Taxas": 0.0,
+            # Na legenda da nota, a observação 'D' significa Day Trade
+            "DayTrade": "D" in obs,
+            "IRRF": 0.0,
+            "Categoria": _categoria_por_especificacao(especificacao)
+        })
 
     # 3. Extração de Taxas Totais e IRRF do Resumo da Nota
-    taxas_totais = 0.0
-    irrf_total = 0.0
+    taxas_totais = (
+        _valor_do_rotulo(texto, r'Taxa\s*de\s*liquida[çc][ãa]o')
+        + _valor_do_rotulo(texto, r'Emolumentos')
+        + _valor_do_rotulo(texto, r'Corretagem|Taxa\s*Operacional')
+        + _valor_do_rotulo(texto, r'Taxa\s*de\s*Registro')
+    )
+    irrf_total = _valor_do_rotulo(texto, r'I\.?R\.?R\.?F\.?', ultimo=True)
 
-    match_taxa_liq = re.search(r'Taxa\s*de\s*liquidação\s*([\d\.,]+)', texto, re.IGNORECASE)
-    match_emolumentos = re.search(r'Emolumentos\s*([\d\.,]+)', texto, re.IGNORECASE)
-    match_corretagem = re.search(r'(?:Corretagem|Taxa\s*Operacional)\s*([\d\.,]+)', texto, re.IGNORECASE)
-    match_irrf = re.search(r'(?:I\.R\.R\.F\.|IRRF)\s*(?:sobre\s*operações)?\s*([\d\.,]+)', texto, re.IGNORECASE)
-
-    if match_taxa_liq:
-        taxas_totais += _converter_valor_br(match_taxa_liq.group(1))
-    if match_emolumentos:
-        taxas_totais += _converter_valor_br(match_emolumentos.group(1))
-    if match_corretagem:
-        taxas_totais += _converter_valor_br(match_corretagem.group(1))
-    if match_irrf:
-        irrf_total = _converter_valor_br(match_irrf.group(1))
-
-    # 4. Rateio das taxas e IRRF proporcionalmente entre as operações encontradas
+    # 4. Rateio proporcional ao valor de cada operação.
+    # O IRRF ("dedo-duro") é retido apenas sobre as vendas, por isso é rateado
+    # somente entre elas.
     if operacoes_encontradas:
-        qtd_ops = len(operacoes_encontradas)
-        taxa_por_op = round(taxas_totais / qtd_ops, 2)
-        irrf_por_op = round(irrf_total / qtd_ops, 2)
+        valores = {id(op): op["Quantidade"] * op["Preco"] for op in operacoes_encontradas}
+        valor_total = sum(valores.values())
+        valor_vendas = sum(v for op, v in zip(operacoes_encontradas, valores.values()) if op["Tipo"] == "V")
 
         for op in operacoes_encontradas:
-            op["Taxas"] = taxa_por_op
-            op["IRRF"] = irrf_por_op
+            valor_op = valores[id(op)]
+            if valor_total > 0:
+                op["Taxas"] = round(taxas_totais * valor_op / valor_total, 2)
+            if op["Tipo"] == "V" and valor_vendas > 0:
+                op["IRRF"] = round(irrf_total * valor_op / valor_vendas, 2)
+
+        # O arredondamento de cada parcela deixa centavos de sobra; o residual
+        # é lançado na maior operação para que a soma feche com a nota.
+        maior = max(operacoes_encontradas, key=lambda op: valores[id(op)])
+        maior["Taxas"] = round(maior["Taxas"] + taxas_totais - sum(o["Taxas"] for o in operacoes_encontradas), 2)
+
+        vendas = [o for o in operacoes_encontradas if o["Tipo"] == "V"]
+        if vendas:
+            maior_venda = max(vendas, key=lambda op: valores[id(op)])
+            maior_venda["IRRF"] = round(maior_venda["IRRF"] + irrf_total - sum(o["IRRF"] for o in vendas), 2)
 
     df = pd.DataFrame(operacoes_encontradas)
     if df.empty:
         df = pd.DataFrame(columns=["Data", "Tipo", "Ticker", "Quantidade", "Preco", "Taxas", "DayTrade", "IRRF"])
-    
-    return normalizar_colunas(df)
 
-
-def ler_arquivo_operacoes(file_input: Any, nome_arquivo: str = "") -> pd.DataFrame:
-    """
-    Função principal de entrada. Detecta o formato do arquivo (PDF, CSV ou Excel)
-    e chama o parser correspondente.
-    """
-    nome = nome_arquivo.lower() if nome_arquivo else str(file_input).lower()
-
-    if nome.endswith(".pdf"):
-        return parse_pdf_nota_corretagem(file_input)
-    elif nome.endswith(".xlsx") or nome.endswith(".xls"):
-        return normalizar_colunas(pd.read_excel(file_input))
-    else:
-        try:
-            df = pd.read_csv(file_input, sep=";")
-            if len(df.columns) <= 1:
-                if hasattr(file_input, 'seek'):
-                    file_input.seek(0)
-                df = pd.read_csv(file_input, sep=",")
-        except Exception:
-            if hasattr(file_input, 'seek'):
-                file_input.seek(0)
-            df = pd.read_csv(file_input, sep=",")
-
-        return normalizar_colunas(df)
-
-
-def _para_float(valor: Any) -> float:
-    """Converte um valor de célula para float, tratando vazios, NaN e formato brasileiro."""
-    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
-        return 0.0
-    if isinstance(valor, (int, float)):
-        return float(valor)
-
-    texto = str(valor).strip()
-    if not texto or texto.lower() in ("nan", "none", "-"):
-        return 0.0
-    # Valores com vírgula decimal ('1.234,56') exigem a conversão brasileira
-    if "," in texto:
-        return _converter_valor_br(texto)
-    try:
-        return float(texto)
-    except ValueError:
-        return 0.0
-
-
-def _para_bool(valor: Any) -> bool:
-    """
-    Converte um valor de célula para booleano.
-    Necessário porque bool('False') e bool('Não') resultariam em True.
-    """
-    if isinstance(valor, bool):
-        return valor
-    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
-        return False
-    return str(valor).strip().lower() in ("1", "true", "t", "sim", "s", "yes", "y", "dt", "daytrade")
+    return df
 
 
 def converter_dataframe_para_operacoes(
@@ -269,7 +224,10 @@ def converter_dataframe_para_operacoes(
     mapa_categorias: Dict[str, str] = None
 ) -> List[Operacao]:
     """
-    Converte o DataFrame extraído em uma lista de objetos Operacao do utils.py.
+    Converte o DataFrame de operações em uma lista de objetos Operacao do utils.py.
+
+    Os valores já chegam com os tipos corretos, pois são produzidos pelo parse da
+    nota em PDF ou pelo lançamento manual da interface.
     """
     if mapa_categorias is None:
         mapa_categorias = {}
@@ -279,20 +237,25 @@ def converter_dataframe_para_operacoes(
     for _, row in df.iterrows():
         ticker = str(row["Ticker"]).strip().upper()
 
-        if ticker not in mapa_categorias:
+        # A nota de corretagem em PDF já traz a categoria, deduzida da
+        # especificação do título. Só consulta a API quando ela não vem,
+        # caso do lançamento manual, em que o usuário digita o ticker.
+        categoria_informada = str(row.get("Categoria", "") or "").strip().upper()
+        if categoria_informada in ("ACAO", "FII", "ETF"):
+            mapa_categorias[ticker] = categoria_informada
+        elif ticker not in mapa_categorias:
             mapa_categorias[ticker] = classificar_ativo_api(ticker)
 
         categoria = mapa_categorias[ticker]
-        tipo_bruto = str(row["Tipo"]).strip().upper()
-        if not tipo_bruto:
+        tipo_op = str(row["Tipo"]).strip().upper()[:1]
+        if tipo_op not in ("C", "V"):
             continue
-        tipo_op = tipo_bruto[0]
 
-        qtd = int(_para_float(row["Quantidade"]))
-        preco = _para_float(row["Preco"])
-        taxas = _para_float(row.get("Taxas", 0.0))
-        day_trade = _para_bool(row.get("DayTrade", False))
-        irrf = _para_float(row.get("IRRF", 0.0))
+        qtd = int(row["Quantidade"])
+        preco = float(row["Preco"])
+        taxas = float(row.get("Taxas", 0.0) or 0.0)
+        day_trade = bool(row.get("DayTrade", False))
+        irrf = float(row.get("IRRF", 0.0) or 0.0)
 
         # A data pode chegar como texto ou como Timestamp do pandas
         data_bruta = row["Data"]

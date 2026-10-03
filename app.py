@@ -2,7 +2,8 @@
 app.py - Interface Web em Streamlit para Calculadora de Impostos em Renda Variável (B3)
 
 Este aplicativo foi desenvolvido para o Trabalho de Conclusão de Curso (TCC).
-Utiliza o módulo parser.py para leitura de arquivos reais e utils.py para os cálculos fiscais.
+A única fonte de dados aceita é a Nota de Corretagem em PDF (padrão SINACOR da B3),
+lida pelo módulo parser.py. Os cálculos fiscais ficam no módulo utils.py.
 Sem dados mockados ou simulados.
 """
 
@@ -14,12 +15,12 @@ import streamlit as st
 
 # Importa os módulos do projeto
 from utils import apurar_mes
-from parser import ler_arquivo_operacoes, converter_dataframe_para_operacoes
+from parser import parse_pdf_nota_corretagem, converter_dataframe_para_operacoes
 
-# Colunas padrão de uma planilha de operações
-COLUNAS = ["Data", "Tipo", "Ticker", "Quantidade", "Preco", "Taxas", "DayTrade", "IRRF"]
+# Colunas que descrevem uma operação dentro do sistema
+COLUNAS = ["Data", "Tipo", "Ticker", "Quantidade", "Preco", "Taxas", "DayTrade", "IRRF", "Categoria"]
 
-# Colunas que o usuário é obrigado a informar (as demais recebem valor padrão)
+# Colunas indispensáveis para a apuração (as demais recebem valor padrão)
 COLUNAS_OBRIGATORIAS = ["Data", "Tipo", "Ticker", "Quantidade", "Preco"]
 
 # Configuração da página em modo Wide
@@ -70,19 +71,20 @@ def preparar_operacoes(df: pd.DataFrame) -> pd.DataFrame:
     adiciona a coluna 'Mes' (AAAA-MM) e ordena as operações em ordem cronológica.
 
     A ordem cronológica é indispensável: o custo médio de cada ativo depende
-    da sequência em que as compras e as vendas aconteceram.
+    da sequência em que as compras e as vendas aconteceram, e as notas podem
+    ser importadas em qualquer ordem.
     """
     faltando = [c for c in COLUNAS_OBRIGATORIAS if c not in df.columns]
     if faltando:
-        raise ValueError("O arquivo não possui as colunas obrigatórias: " + ", ".join(faltando))
+        raise ValueError("Faltam as informações obrigatórias: " + ", ".join(faltando))
 
     df = df.copy()
     df["Data"] = pd.to_datetime(df["Data"], format="mixed", dayfirst=True, errors="coerce")
 
-    # Descarta linhas sem data válida (cabeçalhos e rodapés captados pelo parser)
+    # Descarta linhas sem data válida (data do pregão não localizada na nota)
     df = df.dropna(subset=["Data"])
     if df.empty:
-        raise ValueError("Nenhuma operação com data válida foi encontrada no arquivo.")
+        raise ValueError("Nenhuma operação com data de pregão válida foi encontrada.")
 
     df["Mes"] = df["Data"].dt.strftime("%Y-%m")
     return df.sort_values("Data").reset_index(drop=True)
@@ -107,6 +109,11 @@ if "df_operacoes" not in st.session_state:
 if "mapa_categorias" not in st.session_state:
     st.session_state["mapa_categorias"] = {}
 
+# Nome de cada nota já importada -> resumo da importação. Evita importar o mesmo
+# arquivo duas vezes e mantém o retorno visível a cada recarga da página.
+if "notas_importadas" not in st.session_state:
+    st.session_state["notas_importadas"] = {}
+
 # -----------------------------------------------------------------------------
 # TABS PRINCIPAIS
 # -----------------------------------------------------------------------------
@@ -123,31 +130,39 @@ with tab_import:
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        st.subheader("Upload de Arquivo Real (PDF, CSV ou Excel)")
-        uploaded_file = st.file_uploader(
-            "Selecione a Nota de Corretagem (.pdf) ou planilha (.csv / .xlsx)",
-            type=["pdf", "csv", "xlsx"]
+        st.subheader("Upload das Notas de Corretagem (PDF)")
+        uploaded_files = st.file_uploader(
+            "Selecione uma ou mais notas de corretagem no padrão SINACOR da B3",
+            type=["pdf"],
+            accept_multiple_files=True
         )
 
-        if uploaded_file is not None:
+        # Cada nota corresponde a um pregão e a apuração é mensal, por isso as
+        # notas são acumuladas. Cada arquivo é lido uma única vez.
+        for arquivo in uploaded_files or []:
+            if arquivo.name in st.session_state["notas_importadas"]:
+                continue
+
             try:
                 # Utiliza o parser.py separado para importar os dados reais
-                df_parsed = ler_arquivo_operacoes(uploaded_file, uploaded_file.name)
-                if df_parsed.empty:
-                    st.warning(
-                        f"Nenhuma operação foi identificada em '{uploaded_file.name}'. "
-                        "Confira o arquivo ou lance as operações manualmente."
-                    )
+                df_nota = parse_pdf_nota_corretagem(arquivo)
+                if df_nota.empty:
+                    resumo = "⚠️ nenhuma operação identificada"
                 else:
                     # Valida o conteúdo antes de gravar no estado da sessão
-                    preparar_operacoes(df_parsed)
-                    st.session_state["df_operacoes"] = df_parsed
-                    st.success(
-                        f"Arquivo '{uploaded_file.name}' importado com sucesso via parser.py "
-                        f"({len(df_parsed)} operações)."
+                    preparar_operacoes(df_nota)
+                    st.session_state["df_operacoes"] = pd.concat(
+                        [st.session_state["df_operacoes"], df_nota],
+                        ignore_index=True
                     )
+                    resumo = f"✅ {len(df_nota)} operações importadas"
             except Exception as e:
-                st.error(f"Erro no parsing do arquivo: {e}")
+                resumo = f"❌ erro na leitura: {e}"
+
+            st.session_state["notas_importadas"][arquivo.name] = resumo
+
+        for nome, resumo in st.session_state["notas_importadas"].items():
+            st.write(f"**{nome}** — {resumo}")
 
     with col2:
         st.subheader("Adicionar Operação Manualmente")
@@ -176,7 +191,9 @@ with tab_import:
                     "Preco": float(form_preco),
                     "Taxas": float(form_taxas),
                     "DayTrade": bool(form_dt),
-                    "IRRF": float(form_irrf)
+                    "IRRF": float(form_irrf),
+                    # Vazio: o ticker digitado é classificado pela API em utils.py
+                    "Categoria": ""
                 }
                 st.session_state["df_operacoes"] = pd.concat(
                     [st.session_state["df_operacoes"], pd.DataFrame([nova_op])],
@@ -192,9 +209,10 @@ with tab_import:
         if st.button("Limpar Operações"):
             st.session_state["df_operacoes"] = df_vazio()
             st.session_state["mapa_categorias"] = {}
+            st.session_state["notas_importadas"] = {}
             st.rerun()
     else:
-        st.info("Nenhuma operação cadastrada. Faça upload de um arquivo ou adicione uma operação manualmente.")
+        st.info("Nenhuma operação cadastrada. Importe uma nota de corretagem em PDF ou adicione uma operação manualmente.")
 
 # -----------------------------------------------------------------------------
 # TAB 2: Apuração Fiscal Real
@@ -383,16 +401,29 @@ with tab_docs:
     5. **Mínimo de R$ 10,00 para DARF**: Imposto a recolher inferior a R$ 10,00 acumula para meses futuros.
     6. **Custo Médio Ponderado**: O custo de cada ativo é recalculado a cada compra, em ordem cronológica.
 
-    **Formato esperado da planilha (CSV / Excel)**
+    ### 📄 Leitura da Nota de Corretagem (padrão SINACOR)
 
-    | Coluna | Obrigatória | Exemplo |
-    | --- | --- | --- |
-    | `Data` | Sim | `15/07/2026` ou `2026-07-15` |
-    | `Tipo` | Sim | `C` (compra) ou `V` (venda) |
-    | `Ticker` | Sim | `PETR4`, `MXRF11` |
-    | `Quantidade` | Sim | `100` |
-    | `Preco` | Sim | `30.50` |
-    | `Taxas` | Não (padrão `0`) | `4.85` |
-    | `DayTrade` | Não (padrão `False`) | `Sim` / `Não` |
-    | `IRRF` | Não (padrão `0`) | `0.75` |
+    A única fonte de dados do sistema é a nota de corretagem em PDF. Da seção
+    **"Negócios realizados"**, cada linha é lida pelas posições das colunas:
+
+    ```
+    1-BOVESPA V FRACIONARIO BBSEGURIDADE ON NM 54 24,99 1.349,46 C
+    └ bolsa   │ └ mercado   └ especificação     │   │     │        └ débito/crédito
+              └ compra/venda                    │   │     └ valor da operação
+                                                │   └ preço unitário
+                                                └ quantidade
+    ```
+
+    | Informação | Como é obtida |
+    | --- | --- |
+    | Data da operação | Campo **Data pregão** do cabeçalho da nota |
+    | Compra / Venda | Coluna **C/V**, e não a coluna final D/C (débito/crédito) |
+    | Ativo | Coluna **Especificação do título**, pois a nota não informa o ticker |
+    | Categoria | Deduzida da especificação: `FII` → FII, sufixo `CI` → ETF, `ON/PN/UNT` → ação |
+    | Day Trade | Código `D` da coluna **Obs. (*)**, conforme a legenda da nota |
+    | Taxas | **Taxa de liquidação**, **Emolumentos**, **Taxa de Registro** e **Corretagem** do resumo, rateados proporcionalmente ao valor de cada operação |
+    | IRRF | Linha **I.R.R.F. s/ operações** do resumo, rateado somente entre as vendas, pois é retido na venda |
+
+    Cada nota cobre um único pregão. Para apurar o mês, importe todas as notas do
+    período: elas são acumuladas e reordenadas por data automaticamente.
     """)
