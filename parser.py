@@ -175,7 +175,8 @@ def parse_pdf_nota_corretagem(file_input: Any) -> pd.DataFrame:
             # Na legenda da nota, a observação 'D' significa Day Trade
             "DayTrade": "D" in obs,
             "IRRF": 0.0,
-            "Categoria": _categoria_por_especificacao(especificacao)
+            "Categoria": _categoria_por_especificacao(especificacao),
+            "Origem": "PDF"
         })
 
     # 3. Extração de Taxas Totais e IRRF do Resumo da Nota

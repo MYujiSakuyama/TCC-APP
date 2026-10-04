@@ -1,4 +1,5 @@
 import unittest
+import pandas as pd
 from utils import (
     PosicaoAtivo,
     Operacao,
@@ -6,6 +7,10 @@ from utils import (
     apurar_mes,
     ResultadoMensal,
     classificar_ativo_api
+)
+from multiplicador import (
+    aplicar_multiplicador_df,
+    aplicar_multiplicador_operacoes
 )
 
 class TestUtilsCalculos(unittest.TestCase):
@@ -149,6 +154,60 @@ class TestUtilsCalculos(unittest.TestCase):
         # Deve calcular o resultado financeiro sem lançar exceção
         resultado = pos.vender(100, 20.00, 5.00)
         self.assertEqual(resultado, 1995.00)
+
+    def test_multiplicador_df_basico(self):
+        df = pd.DataFrame([
+            {"Data": "2026-05-02", "Tipo": "V", "Ticker": "PETR4", "Quantidade": 100, "Preco": 30.00, "Taxas": 5.00, "IRRF": 0.15, "Origem": "PDF"},
+            {"Data": "2026-05-02", "Tipo": "C", "Ticker": "VALE3", "Quantidade": 50, "Preco": 60.00, "Taxas": 2.50, "IRRF": 0.00, "Origem": "PDF"}
+        ])
+        df_mult = aplicar_multiplicador_df(df, fator=2.0)
+        self.assertEqual(df_mult.loc[0, "Quantidade"], 200)
+        self.assertEqual(df_mult.loc[0, "Taxas"], 10.00)
+        self.assertEqual(df_mult.loc[0, "IRRF"], 0.30)
+        self.assertEqual(df_mult.loc[1, "Quantidade"], 100)
+        self.assertEqual(df_mult.loc[1, "Taxas"], 5.00)
+
+    def test_multiplicador_df_apenas_pdf(self):
+        # Testa se apenas operações do PDF são multiplicadas quando apenas_pdf=True
+        df = pd.DataFrame([
+            {"Data": "2026-05-02", "Tipo": "V", "Ticker": "PETR4", "Quantidade": 100, "Preco": 30.00, "Taxas": 5.00, "IRRF": 0.15, "Origem": "PDF"},
+            {"Data": "2026-05-02", "Tipo": "V", "Ticker": "VALE3", "Quantidade": 100, "Preco": 50.00, "Taxas": 5.00, "IRRF": 0.25, "Origem": "Manual"}
+        ])
+        df_mult = aplicar_multiplicador_df(df, fator=2.0, apenas_pdf=True)
+        # Linha PDF: dobrada
+        self.assertEqual(df_mult.loc[0, "Quantidade"], 200)
+        self.assertEqual(df_mult.loc[0, "Taxas"], 10.00)
+        # Linha Manual: mantida original
+        self.assertEqual(df_mult.loc[1, "Quantidade"], 100)
+        self.assertEqual(df_mult.loc[1, "Taxas"], 5.00)
+
+    def test_multiplicador_operacoes_direto(self):
+        ops = [
+            Operacao(data="2026-05-02", tipo="V", ticker="PETR4", quantidade=100, preco_unitario=30.00, taxas=5.00, irrf=0.15, categoria="ACAO")
+        ]
+        ops_mult = aplicar_multiplicador_operacoes(ops, fator=2.0)
+        self.assertEqual(ops_mult[0].quantidade, 200)
+        self.assertEqual(ops_mult[0].taxas, 10.00)
+        self.assertEqual(ops_mult[0].irrf, 0.30)
+
+    def test_multiplicador_ultrapassar_isencao_e_gerar_darf(self):
+        # Cenário original: vendas de R$ 15.000 em ações no mês (isento de IR, DARF = 0)
+        ops_originais = [
+            Operacao(data="2026-05-02", tipo="V", ticker="BBAS3", quantidade=500, preco_unitario=30.00, taxas=10.00, irrf=0.75, categoria="ACAO")
+        ]
+        res_original, _ = apurar_mes("2026-05", ops_originais, posicoes={})
+        self.assertEqual(res_original.vendas_acoes_swing, 15000.00)
+        self.assertTrue(res_original.isento_swing)
+        self.assertEqual(res_original.darf_a_pagar, 0.0)
+
+        # Com o multiplicador 2x: vendas sobem para R$ 30.000 (tributável a 15%, gerando DARF)
+        ops_duplicadas = aplicar_multiplicador_operacoes(ops_originais, fator=2.0)
+        res_mult, _ = apurar_mes("2026-05", ops_duplicadas, posicoes={})
+        self.assertEqual(res_mult.vendas_acoes_swing, 30000.00)
+        self.assertFalse(res_mult.isento_swing)
+        # Lucro líquido = 30000 - 20 (taxas) = 29980. Imposto 15% = 4497.00. IRRF = 1.50 -> DARF = 4495.50
+        self.assertEqual(res_mult.imposto_swing, 4497.00)
+        self.assertEqual(res_mult.darf_a_pagar, 4495.50)
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,9 +7,13 @@ Aplicação Web desenvolvida em **Python** e **Streamlit** para apuração fisca
 ## Principais Funcionalidades
 
 - **Importação Automática (Parser)**:
-  - Leitura e extração de dados reais a partir de **Notas de Corretagem em PDF** (Padrão SINCOR B3).
-  - Suporte à importação via planilhas **CSV** e **Excel (.xlsx / .xls)**.
+  - Leitura e extração de dados reais a partir de **Notas de Corretagem em PDF** (Padrão SINACOR B3).
   - Possibilidade de lançamento manual de operações.
+
+- **Simulação Didática (Multiplicador 2x para TCC)**:
+  - Módulo para ajustar a escala das operações da nota de teste (`multiplicador.py`).
+  - Como a nota real de teste possui volume de vendas em torno de R$ 15.801,54 (ficando isenta pela faixa de R$ 20.000,00 da RFB), o multiplicador dobra as operações para ~R$ 31.603,08, permitindo demonstrar a tributação efetiva (15%), deduções de IRRF e emissão de DARF.
+  - Alternância imediata entre o modo original (1x - Isento) e o modo de demonstração (2x - Tributado) via interface Streamlit.
 
 - **Apuração Fiscal e Regras da Receita Federal (RFB)**:
   - **Custo Médio Ponderado**: Recálculo dinâmico da posição da carteira a cada nova compra cronológica.
@@ -33,9 +37,10 @@ Aplicação Web desenvolvida em **Python** e **Streamlit** para apuração fisca
 
 ```text
 ├── app.py           # Interface web e dashboard Streamlit
-├── parser.py        # Módulo de extração e parsing de PDFs e planilhas
+├── parser.py        # Módulo de extração e parsing de notas em PDF (padrão SINACOR)
+├── multiplicador.py # Módulo de simulação didática (multiplicador 2x para TCC)
 ├── utils.py         # Módulo de regras de negócio, cálculos fiscais e apuração
-├── test_utils.py    # Testes unitários das regras de cálculo
+├── test_utils.py    # Testes unitários das regras de cálculo e simulação
 ├── requirements.txt # Dependências do projeto
 └── README.md        # Documentação do projeto
 ```

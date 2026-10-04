@@ -16,9 +16,10 @@ import streamlit as st
 # Importa os módulos do projeto
 from utils import apurar_mes
 from parser import parse_pdf_nota_corretagem, converter_dataframe_para_operacoes
+from multiplicador import aplicar_multiplicador_df
 
 # Colunas que descrevem uma operação dentro do sistema
-COLUNAS = ["Data", "Tipo", "Ticker", "Quantidade", "Preco", "Taxas", "DayTrade", "IRRF", "Categoria"]
+COLUNAS = ["Data", "Tipo", "Ticker", "Quantidade", "Preco", "Taxas", "DayTrade", "IRRF", "Categoria", "Origem"]
 
 # Colunas indispensáveis para a apuração (as demais recebem valor padrão)
 COLUNAS_OBRIGATORIAS = ["Data", "Tipo", "Ticker", "Quantidade", "Preco"]
@@ -101,7 +102,32 @@ prej_ini_fiis = st.sidebar.number_input("Prejuízo Acumulado (FIIs)", min_value=
 irrf_anterior = st.sidebar.number_input("IRRF Retido Acumulado Anterior", min_value=0.0, value=0.0, step=1.0)
 darf_anterior = st.sidebar.number_input("DARF Acumulado Anterior (< R$ 10,00)", min_value=0.0, value=0.0, step=1.0)
 
+# -----------------------------------------------------------------------------
+# SIDEBAR: Simulação Didática (Multiplicador 2x para TCC)
+# -----------------------------------------------------------------------------
+st.sidebar.divider()
+st.sidebar.header("Simulação Didática (TCC)")
+st.sidebar.caption(
+    "Como a nota em PDF de teste possui R$ 15.801,54 em vendas (isenta pelo teto de R$ 20k da RFB), "
+    "o multiplicador 2x eleva o montante para ~R$ 31.603,08 para demonstrar a apuração tributável e emissão de DARF."
+)
+
+if "multiplicador_ativo" not in st.session_state:
+    st.session_state["multiplicador_ativo"] = True
+
+mult_selecionado = st.sidebar.checkbox(
+    "Multiplicador 2x (Operações do PDF)",
+    value=st.session_state["multiplicador_ativo"],
+    help="Dobra as quantidades, taxas e IRRF das operações do PDF para demonstrar a apuração tributável e emissão de DARF."
+)
+if mult_selecionado != st.session_state["multiplicador_ativo"]:
+    st.session_state["multiplicador_ativo"] = mult_selecionado
+    st.rerun()
+
 # Inicializa o estado de sessão para armazenar as operações do usuário
+if "df_operacoes_base" not in st.session_state:
+    st.session_state["df_operacoes_base"] = df_vazio()
+
 if "df_operacoes" not in st.session_state:
     st.session_state["df_operacoes"] = df_vazio()
 
@@ -148,10 +174,11 @@ with tab_import:
                 if df_nota.empty:
                     resumo = "nenhuma operação identificada"
                 else:
+                    df_nota["Origem"] = "PDF"
                     # Valida o conteúdo antes de gravar no estado da sessão
                     preparar_operacoes(df_nota)
-                    st.session_state["df_operacoes"] = pd.concat(
-                        [st.session_state["df_operacoes"], df_nota],
+                    st.session_state["df_operacoes_base"] = pd.concat(
+                        [st.session_state["df_operacoes_base"], df_nota],
                         ignore_index=True
                     )
                     resumo = f"{len(df_nota)} operações importadas"
@@ -192,20 +219,46 @@ with tab_import:
                     "DayTrade": bool(form_dt),
                     "IRRF": float(form_irrf),
                     # Vazio: o ticker digitado é classificado pela API em utils.py
-                    "Categoria": ""
+                    "Categoria": "",
+                    "Origem": "Manual"
                 }
-                st.session_state["df_operacoes"] = pd.concat(
-                    [st.session_state["df_operacoes"], pd.DataFrame([nova_op])],
+                st.session_state["df_operacoes_base"] = pd.concat(
+                    [st.session_state["df_operacoes_base"], pd.DataFrame([nova_op])],
                     ignore_index=True
                 )
                 st.success(f"Operação com {ticker_informado} adicionada!")
 
+    # Sincroniza df_operacoes aplicando o multiplicador configurado
+    fator_atual = 2.0 if st.session_state["multiplicador_ativo"] else 1.0
+    st.session_state["df_operacoes"] = aplicar_multiplicador_df(
+        st.session_state["df_operacoes_base"],
+        fator=fator_atual,
+        apenas_pdf=True
+    )
+
     st.divider()
+
+    # Banner informativo do status da simulação didática
+    if st.session_state["multiplicador_ativo"]:
+        st.info(
+            "💡 **Modo Demonstração (Multiplicador 2x) ATIVO:** As operações importadas de notas em PDF estão com quantidades, "
+            "taxas e IRRF multiplicados por **2x**, totalizando **~R$ 31.603,08** em vendas de ações. "
+            "Isso permite ultrapassar o teto de isenção de R$ 20.000,00 da Receita Federal e demonstrar o cálculo efetivo "
+            "do imposto devido (15%) e a emissão do DARF na Aba 2. (Desmarque na barra lateral para ver o valor original de R$ 15.801,54 isento)."
+        )
+    else:
+        st.warning(
+            "ℹ️ **Modo Original (1x) ATIVO:** As operações estão com os valores originais da nota de corretagem "
+            "(total de **R$ 15.801,54** em vendas de ações). Como este valor é menor que R$ 20.000,00, a apuração na Aba 2 "
+            "resultará em **ISENÇÃO** de IR e DARF zerado. Ative o multiplicador 2x na barra lateral para demonstrar a apuração tributável."
+        )
+
     st.subheader("Operações Importadas / Cadastradas")
 
     if not st.session_state["df_operacoes"].empty:
         st.dataframe(st.session_state["df_operacoes"], width="stretch")
         if st.button("Limpar Operações"):
+            st.session_state["df_operacoes_base"] = df_vazio()
             st.session_state["df_operacoes"] = df_vazio()
             st.session_state["mapa_categorias"] = {}
             st.session_state["notas_importadas"] = {}
@@ -221,6 +274,8 @@ with tab_apuracao:
         st.warning("Nenhuma operação encontrada. Importe ou adicione operações na Aba 1.")
     else:
         st.subheader("Classificação de Ativos e Apuração Fiscal")
+        if st.session_state.get("multiplicador_ativo", False):
+            st.info("💡 **Simulação Didática Ativa (Multiplicador 2x):** As operações do PDF foram dobradas para ultrapassar o teto de isenção de R$ 20.000,00 da RFB, viabilizando a demonstração da tributação e emissão de DARF.")
 
         try:
             df_ops = preparar_operacoes(st.session_state["df_operacoes"])
@@ -353,6 +408,7 @@ with tab_apuracao:
 RELATÓRIO FISCAL DE IMPOSTOS EM RENDA VARIÁVEL (B3) - TCC IFPR
 ====================================================================
 Mês Apurado: {res_mensal.mes_ano}
+Modo de Apuração: {'Simulação Didática (Multiplicador 2x no PDF)' if st.session_state.get('multiplicador_ativo', False) else 'Valores Originais da Nota (1x)'}
 
 1. VOLUMES DE VENDAS
 - Swing Trade (Ações): {formatar_brl(res_mensal.vendas_acoes_swing)}
@@ -399,6 +455,10 @@ with tab_docs:
     4. **Dedução de IRRF**: Imposto de renda retido na fonte (dedo-duro) é abatido do imposto devido.
     5. **Mínimo de R$ 10,00 para DARF**: Imposto a recolher inferior a R$ 10,00 acumula para meses futuros.
     6. **Custo Médio Ponderado**: O custo de cada ativo é recalculado a cada compra, em ordem cronológica.
+
+    ### Simulação Didática para Apresentação do TCC
+
+    Para fins de apresentação acadêmica na banca de TCC, como a nota de corretagem real de teste possui volume de vendas em torno de R$ 15.801,54 (sendo isenta pela RFB), o sistema dispõe do módulo `multiplicador.py`. Ele permite aplicar um fator de 2x sobre as operações do PDF, elevando o montante para R$ 31.603,08 para demonstrar o cálculo do imposto de 15%, o abatimento do IRRF e a geração do DARF.
 
     ### Leitura da Nota de Corretagem (padrão SINACOR)
 
