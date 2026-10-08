@@ -1,6 +1,6 @@
 import unittest
 import pandas as pd
-from calculadora_ir.py import (
+from calculadora_ir import (
     PosicaoAtivo,
     Operacao,
     verificar_isencao_vendas_acoes,
