@@ -25,7 +25,7 @@ de isenção e viabiliza a demonstração prática da apuração tributária com
 
 from typing import List, Optional
 import pandas as pd
-from calculadora_ir.py import Operacao
+from calculadora_ir import Operacao
 
 
 def aplicar_multiplicador_df(
