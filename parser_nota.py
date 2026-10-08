@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Tuple
 import pypdf
 import pdfplumber
 
-from calculadora_ir.py import Operacao, classificar_ativo_api
+from calculadora_ir import Operacao, classificar_ativo_api
 
 
 def extrair_texto_pdf(file_input: Any) -> str:
