@@ -98,6 +98,37 @@ class PosicaoAtivo:
         return resultado
 
 
+# Posição em carteira antes da primeira nota importada (quantidade original da
+# nota, preço médio). Sem ela, as ações vendidas na nota de teste não têm compra
+# registrada e o custo de aquisição seria zero. O preço médio de referência é o
+# fechamento oficial de 03/01/2022 (arquivo COTAHIST da B3). A chave é a
+# especificação do título, exatamente como o parser lê da nota.
+POSICOES_INICIAIS = {
+    "BBSEGURIDADE ON NM": (54, 20.60),
+    "BRASIL ON NM": (41, 28.82),
+    "ENERGIAS BR ON NM": (144, 20.74),
+    "ENGIE BRASIL ON NM": (27, 38.04),
+    "KLABIN S/A UNT N2": (73, 25.52),
+    "SUL AMERICA UNT N2": (283, 25.78),
+}
+
+
+def carregar_posicoes_iniciais(fator: float = 1.0) -> Dict[str, "PosicaoAtivo"]:
+    """
+    Monta as posições iniciais da carteira. O fator acompanha o multiplicador
+    da simulação didática, para que a quantidade em carteira cubra as vendas.
+    """
+    posicoes = {}
+    for ticker, (qtd, preco_medio) in POSICOES_INICIAIS.items():
+        qtd_ajustada = int(round(qtd * fator))
+        posicoes[ticker] = PosicaoAtivo(
+            quantidade=qtd_ajustada,
+            custo_total=_arredondar(qtd_ajustada * preco_medio),
+            custo_medio=preco_medio
+        )
+    return posicoes
+
+
 @dataclass
 class Operacao:
     """Representa uma operação de compra ou venda."""

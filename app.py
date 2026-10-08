@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 # Importa os módulos do projeto
-from utils import apurar_mes
+from utils import apurar_mes, carregar_posicoes_iniciais
 from parser import parse_pdf_nota_corretagem, converter_dataframe_para_operacoes
 from multiplicador import aplicar_multiplicador_df
 
@@ -283,7 +283,8 @@ with tab_apuracao:
             # Apura mês a mês, em ordem cronológica, levando para o mês seguinte
             # as posições, os prejuízos, o IRRF e o DARF que sobraram.
             with st.spinner("Classificando ativos via API de dados externa e apurando os meses..."):
-                posicoes = {}
+                fator_posicoes = 2.0 if st.session_state["multiplicador_ativo"] else 1.0
+                posicoes = carregar_posicoes_iniciais(fator_posicoes)
                 prej_swing, prej_dt, prej_fiis = prej_ini_swing, prej_ini_dt, prej_ini_fiis
                 irrf_acum, darf_acum = irrf_anterior, darf_anterior
                 resultados = {}
