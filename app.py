@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 # Importa os módulos do projeto
-from calculadora_ir.py import apurar_mes, carregar_posicoes_iniciais
+from calculadora_ir import apurar_mes, carregar_posicoes_iniciais
 from parser_nota import parse_pdf_nota_corretagem, converter_dataframe_para_operacoes
 from multiplicador import aplicar_multiplicador_df
 
